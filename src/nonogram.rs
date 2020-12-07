@@ -1,4 +1,10 @@
-use ggez::{graphics, nalgebra::Point2, Context, GameError, GameResult};
+use ggez::{
+    event::MouseButton,
+    graphics::{self, Color},
+    nalgebra::Point2,
+    Context, GameError, GameResult,
+};
+use graphics::{DrawMode, Mesh, Rect};
 use std::fs;
 
 pub type Nonogram = Vec<Vec<Block>>;
@@ -7,7 +13,7 @@ pub const BLOCK_CHAR: char = '#';
 const BLOCK_SIZE: f32 = 35.0;
 const BLOCK_COLOR: graphics::Color = graphics::WHITE;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Block {
     Empty,
     Filled,
@@ -16,20 +22,22 @@ pub enum Block {
 }
 
 impl Block {
-    pub fn to_mesh(&self, ctx: &mut Context) -> GameResult<graphics::Mesh> {
+    pub fn to_mesh(&self, ctx: &mut Context) -> GameResult<Mesh> {
         match self {
-            Block::Filled => graphics::Mesh::new_rectangle(
+            Block::Filled => Mesh::new_rectangle(
                 ctx,
-                graphics::DrawMode::fill(),
-                graphics::Rect::new(0.0, 0.0, BLOCK_SIZE, BLOCK_SIZE),
+                DrawMode::fill(),
+                Rect::new(0.0, 0.0, BLOCK_SIZE, BLOCK_SIZE),
                 BLOCK_COLOR,
             ),
-            Block::Empty => graphics::Mesh::new_rectangle(
+
+            Block::Empty => Mesh::new_rectangle(
                 ctx,
-                graphics::DrawMode::fill(),
-                graphics::Rect::new(0.0, 0.0, BLOCK_SIZE, BLOCK_SIZE),
-                graphics::Color::from_rgb(50, 50, 50),
+                DrawMode::fill(),
+                Rect::new(0.0, 0.0, 0.0, 0.0),
+                graphics::BLACK,
             ),
+
             Block::Crossed => graphics::MeshBuilder::new()
                 .line(
                     &[Point2::new(0.0, 0.0), Point2::new(BLOCK_SIZE, BLOCK_SIZE)],
@@ -42,30 +50,59 @@ impl Block {
                     BLOCK_COLOR,
                 )?
                 .build(ctx),
-            Block::Marked => graphics::Mesh::new_rectangle(
+
+            Block::Marked => Mesh::new_rectangle(
                 ctx,
-                graphics::DrawMode::stroke(0.0),
-                graphics::Rect::new(0.0, 0.0, BLOCK_SIZE, BLOCK_SIZE),
-                BLOCK_COLOR,
+                DrawMode::stroke(0.0),
+                Rect::new(0.0, 0.0, BLOCK_SIZE, BLOCK_SIZE),
+                graphics::Color::from_rgba(255, 255, 255, 128),
             ),
         }
     }
 
-    pub fn update() -> GameResult<()> {
-        Ok(())
+    pub fn from_mouse_button(&self, button: MouseButton) -> Self {
+        let proposed_block = match button {
+            MouseButton::Left => Block::Filled,
+            MouseButton::Right => Block::Crossed,
+            MouseButton::Middle => Block::Marked,
+            MouseButton::Other(_) => Block::Filled,
+        };
+
+        if *self == proposed_block {
+            Block::Empty
+        } else {
+            proposed_block
+        }
     }
 }
 
 pub fn draw_nonogram(nonogram: &Nonogram, ctx: &mut Context) -> GameResult<()> {
     let (window_width, window_height) = graphics::drawable_size(ctx);
+    let (half_window_width, half_window_height) = (window_width / 2.0, window_height / 2.0);
 
-    let nonogram_height = nonogram.len() as f32 * BLOCK_SIZE;
-    let nonogram_width = nonogram[0].len() as f32 * BLOCK_SIZE;
+    let (width, height) = (
+        nonogram[0].len() as f32 * BLOCK_SIZE,
+        nonogram.len() as f32 * BLOCK_SIZE,
+    );
 
-    let center_x = window_width / 2.0 - nonogram_width / 2.0;
-    let center_y = window_height / 2.0 - nonogram_height / 2.0;
+    let top_left_x = half_window_width - width / 2.0;
+    let top_left_y = half_window_height - height / 2.0;
 
     let params = graphics::DrawParam::default();
+
+    let background = Mesh::new_rectangle(
+        ctx,
+        DrawMode::fill(),
+        Rect::new(0.0, 0.0, width, height),
+        Color::from_rgb(255 / 4, 255 / 4, 255 / 4),
+    )?;
+
+    graphics::draw(
+        ctx,
+        &background,
+        params.dest(Point2::new(top_left_x, top_left_y)),
+    )?;
+
     for (y, line) in nonogram.iter().enumerate() {
         for (x, block) in line.iter().enumerate() {
             let mesh = block.to_mesh(ctx)?;
@@ -73,13 +110,48 @@ pub fn draw_nonogram(nonogram: &Nonogram, ctx: &mut Context) -> GameResult<()> {
                 ctx,
                 &mesh,
                 params.dest(Point2::new(
-                    center_x + x as f32 * BLOCK_SIZE,
-                    center_y + y as f32 * BLOCK_SIZE,
+                    top_left_x + x as f32 * BLOCK_SIZE,
+                    top_left_y + y as f32 * BLOCK_SIZE,
                 )),
             )?;
         }
     }
+
     Ok(())
+}
+
+pub fn translate_xy_to_rc(
+    nonogram: &Nonogram,
+    x: f32,
+    y: f32,
+    ctx: &mut Context,
+) -> Option<(usize, usize)> {
+    let (window_width, window_height) = graphics::drawable_size(ctx);
+    let (half_window_width, half_window_height) = (window_width / 2.0, window_height / 2.0);
+
+    let (width, height) = (
+        nonogram[0].len() as f32 * BLOCK_SIZE,
+        nonogram.len() as f32 * BLOCK_SIZE,
+    );
+
+    let top_left = (
+        half_window_width - width / 2.0,
+        half_window_height - height / 2.0,
+    );
+
+    let bottom_right = (
+        half_window_width + width / 2.0,
+        half_window_height + height / 2.0,
+    );
+
+    if x < top_left.0 || y < top_left.1 || x > bottom_right.0 || y > bottom_right.1 {
+        return None;
+    }
+
+    let row = (y - top_left.1) / BLOCK_SIZE;
+    let col = (x - top_left.0) / BLOCK_SIZE;
+
+    Some((row as usize, col as usize))
 }
 
 pub fn load_nonogram_from_file(filename: &str) -> GameResult<Nonogram> {
